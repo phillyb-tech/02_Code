@@ -1,0 +1,139 @@
+import random
+from collections import deque
+import matplotlib.pyplot as plt
+import statistics
+import math
+
+def generate_grid(rows=10, cols=10, obstacle_prob=0.2):
+    """
+    Generates a 2D grid with randomly placed obstacles.
+
+    Args:
+        rows (int): Number of rows in the grid.
+        cols (int): Number of columns in the grid.
+        obstacle_prob (float): Probability that a cell is blocked.
+
+    Returns:
+        list of list of int: A 2D list representing the grid.
+                            0 means free cell, 1 means obstacle.
+    """
+    grid = []
+    for r in range(rows):
+        row_data = []
+        for c in range(cols):
+            # Keep start and end cell always free
+            if (r, c) == (0, 0) or (r, c) == (rows - 1, cols - 1):
+                row_data.append(0)
+            else:
+                # Generate obstacle randomly
+                if random.random() < obstacle_prob:
+                    row_data.append(1)
+                else:
+                    row_data.append(0)
+        grid.append(row_data)
+    return grid
+
+
+def can_reach_goal(grid):
+    """
+    Use BFS to check if there's a path from top-left (0,0)
+    to bottom-right (rows-1, cols-1) without hitting obstacles.
+
+    Args:
+        grid (list of list of int): A 2D grid.
+
+    Returns:
+        bool: True if the robot can reach the goal, False otherwise.
+    """
+    rows = len(grid)
+    cols = len(grid[0])
+
+    # Directions for up, down, left, right moves
+    directions = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+
+    # Queue for BFS
+    queue = deque()
+    queue.append((0, 0))
+
+    visited = set()
+    visited.add((0, 0))
+
+    while queue:
+        r, c = queue.popleft()
+
+        # If we reached bottom-right cell
+        if (r, c) == (rows - 1, cols - 1):
+            return True
+
+        for dr, dc in directions:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols:
+                if grid[nr][nc] == 0 and (nr, nc) not in visited:
+                    visited.add((nr, nc))
+                    queue.append((nr, nc))
+    return False
+
+
+def monte_carlo_robot_path(num_runs=1000, rows=10, cols=10, obstacle_prob=0.2):
+    """
+    Estimates the probability that a robot can reach the goal in a randomly
+    generated grid by running multiple trials.
+
+    Args:
+        num_runs (int): Number of Monte Carlo simulations to run.
+        rows (int): Number of rows in the grid.
+        cols (int): Number of columns in the grid.
+        obstacle_prob (float): Probability of any cell being an obstacle.
+
+    Returns:
+        list: A list of 0/1 values indicating success or failure for each run.
+    """
+    results = []
+    for _ in range(num_runs):
+        grid = generate_grid(rows, cols, obstacle_prob)
+        if can_reach_goal(grid):
+            results.append(1)
+        else:
+            results.append(0)
+    return results
+
+if __name__ == "__main__":
+    # Number of simulations to run
+    simulations = 1000
+
+    # Run the Monte Carlo simulation and store each run result
+    results = monte_carlo_robot_path(
+        num_runs=simulations, rows=10, cols=10, obstacle_prob=0.2
+    )
+
+    success_count = sum(results)
+    fail_count = simulations - success_count
+    estimated_probability = success_count / simulations
+
+    # Calculate some key statistics
+    mean_val = estimated_probability
+    stdev_val = statistics.pstdev(results)
+
+    # 95% CI for a proportion: p ± 1.96 * sqrt(p*(1-p)/n)
+    ci_margin = 1.96 * math.sqrt(mean_val * (1 - mean_val) / simulations)
+    ci_lower = mean_val - ci_margin
+    ci_upper = mean_val + ci_margin
+
+    print(f"Out of {simulations} simulations:")
+    print(f"  - Success: {success_count}")
+    print(f"  - Fail:    {fail_count}")
+    print(f"  - Estimated Probability of Success: {mean_val * 100:.2f}%")
+    print(f"  - Standard Deviation: {stdev_val:.4f}")
+    print(f"  - 95% Confidence Interval for Success: [{ci_lower * 100:.2f}%, {ci_upper * 100:.2f}%]")
+
+    # Create a histogram of the 0/1 results
+    # We'll create bins so we get two distinct bars for 0 and 1
+    plt.figure(figsize=(6, 4))
+    # Using bins = [-0.5, 0.5, 1.5] ensures 0 lands in the first bin, 1 in the second bin
+    plt.hist(results, bins=[-0.5, 0.5, 1.5], edgecolor="black", color="skyblue")
+    plt.title("Monte Carlo Simulation: Distribution of Outcomes")
+    plt.xlabel("Outcome (0 = Fail, 1 = Success)")
+    plt.ylabel("Frequency")
+    plt.xticks([0, 1])  # Label the x-axis for clarity
+    plt.tight_layout()
+    plt.show()
