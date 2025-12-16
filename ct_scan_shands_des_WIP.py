@@ -617,7 +617,7 @@ if __name__ == "__main__":
         robot_hours_available_per_day = NUM_ROBOTS * 24 * ROBOT_UPTIME
         robot_utilization = robot_hours_needed_per_day / robot_hours_available_per_day
         
-        # Calculate robot idle time between transports
+        # Calculate robot idle time between trsentence to add in brackets that simplifes prior sentnece and dumbs it down for audianeceansports
         transports_per_robot_per_day = completed_scans / NUM_ROBOTS
         if transports_per_robot_per_day > 0:
             minutes_per_transport_cycle = (24 * 60) / transports_per_robot_per_day
