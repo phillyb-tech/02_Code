@@ -9,10 +9,11 @@ import simpy
 # This simulation models CT scan operations in a hospital to see if robots
 # can help reduce wait times and increase scanner capacity.
 #
-# Three scenarios:
+# Four scenarios:
 # 1. Baseline: Manual patient transport (current state)
 # 2. Rovis Only: Robots help with transport coordination
 # 3. Rovis + Workflow: Robots + improved hospital workflows
+# 4. Workflow Only: Human transport, but faster workflow step A
 
 random.seed(42)  # Makes results repeatable
 
@@ -84,6 +85,11 @@ STEP_SIGMA = {
 
 # Order of steps for calculating totals
 STEP_ORDER = ['P', 'A', 'B1', 'B2', 'B3', 'C1', 'C2', 'C3']
+
+# Add workflow-only scenario: copy baseline timings and set A to 35 minutes
+for _step_name in STEP_ORDER:
+    STEP_MEANS[_step_name]['wf_only'] = STEP_MEANS[_step_name]['baseline']
+STEP_MEANS['A']['wf_only'] = 35.0
 
 def get_theoretical_total(scenario_name):
     """
@@ -314,7 +320,7 @@ def simulate_one_patient(env, patient_id, scheduled_time, scanners, robots,
     yield env.timeout(scheduled_time)
 
     # STEP 2: Transport patient to CT area
-    if scenario_name == "baseline":
+    if scenario_name in ("baseline", "wf_only"):
         # Baseline = manual transport, no robot needed
         transport_time = calculate_patient_transport_time('baseline')
         yield env.timeout(transport_time)
@@ -400,7 +406,7 @@ def simulate_one_day(scenario_name):
     scanners = simpy.Resource(env, capacity=NUM_SCANNERS)
     
     # Robots only exist in non-baseline scenarios
-    robots = None if scenario_name == "baseline" else simpy.Resource(env, capacity=NUM_ROBOTS)
+    robots = None if scenario_name in ("baseline", "wf_only") else simpy.Resource(env, capacity=NUM_ROBOTS)
 
     # Storage for collected data
     collected_metrics = {'robot_waits': [], 'ct_waits': []}
@@ -550,11 +556,13 @@ if __name__ == "__main__":
     theoretical_baseline_time = get_theoretical_total('baseline')
     theoretical_rovis_only_time = get_theoretical_total('rovis_only')
     theoretical_rovis_workflow_time = get_theoretical_total('rovis_workflow')
+    theoretical_wf_only_time = get_theoretical_total('wf_only')
     
     # Calculate theoretical savings (if everything was perfect)
     theoretical_savings = {
         "rovis_only": theoretical_baseline_time - theoretical_rovis_only_time,
         "rovis_workflow": theoretical_baseline_time - theoretical_rovis_workflow_time,
+        "wf_only": theoretical_baseline_time - theoretical_wf_only_time,
     }
     
     # RUN BASELINE SIMULATION
@@ -595,6 +603,7 @@ if __name__ == "__main__":
     scenarios_to_test = [
         ("rovis_only", "9 Rovis - Transport Only"),
         ("rovis_workflow", "9 Rovis - Transport + Workflow"),
+        ("wf_only", "Workflow Only (A faster)"),
     ]
 
     for scenario_key, scenario_label in scenarios_to_test:
@@ -611,19 +620,23 @@ if __name__ == "__main__":
         daily_additional_cm = actual_additional_scans * CT_CM_PER_SCAN
         monthly_additional_cm = daily_additional_cm * 30  # Monthly estimate
 
-        # Calculate robot utilization
-        avg_robot_cycle_time = 20.4  # B1+B2+B3+C1+repositioning (updated with 10min repositioning)
-        robot_hours_needed_per_day = (completed_scans * avg_robot_cycle_time) / 60
-        robot_hours_available_per_day = NUM_ROBOTS * 24 * ROBOT_UPTIME
-        robot_utilization = robot_hours_needed_per_day / robot_hours_available_per_day
-        
-        # Calculate robot idle time between trsentence to add in brackets that simplifes prior sentnece and dumbs it down for audianeceansports
-        transports_per_robot_per_day = completed_scans / NUM_ROBOTS
-        if transports_per_robot_per_day > 0:
-            minutes_per_transport_cycle = (24 * 60) / transports_per_robot_per_day
-            idle_time_between_transports = minutes_per_transport_cycle - avg_robot_cycle_time
+        # Calculate robot utilization (robots only in rovis scenarios)
+        if scenario_key.startswith("rovis"):
+            avg_robot_cycle_time = 20.4  # B1+B2+B3+C1+repositioning (updated with 10min repositioning)
+            robot_hours_needed_per_day = (completed_scans * avg_robot_cycle_time) / 60
+            robot_hours_available_per_day = NUM_ROBOTS * 24 * ROBOT_UPTIME
+            robot_utilization = robot_hours_needed_per_day / robot_hours_available_per_day
+            
+            # Calculate robot idle time between transports
+            transports_per_robot_per_day = completed_scans / NUM_ROBOTS
+            if transports_per_robot_per_day > 0:
+                minutes_per_transport_cycle = (24 * 60) / transports_per_robot_per_day
+                idle_time_between_transports = minutes_per_transport_cycle - avg_robot_cycle_time
+            else:
+                idle_time_between_transports = 0
         else:
-            idle_time_between_transports = 0
+            robot_utilization = 0.0
+            idle_time_between_transports = 0.0
 
         # Add to financial table - showing ACTUAL simulation results
         financial_table_data.append({
@@ -651,31 +664,43 @@ if __name__ == "__main__":
         })
 
     # PRINT SUMMARY TABLES WITH CUSTOM FORMATTING
-    print("\n" + "="*171)
+    print("\n" + "="*110)
     print("TABLE 1: DES-Lite Simulation Results")
-    print("="*171)
+    print("="*110)
     print("Note: Baseline 25 scans/day derived from Shands workflow data; transport efficiency improvements calculated from actual workflow timing reductions.")
     print()
     
-    # Custom header formatting for Table 1 (throughput/financial/utilization)
-    print(f"{'Scenario':<42} {'Daily Scans':<12} {'Scans/Day':<12} {'Add\'l/Day':<15} {'Add\'l/Day':<15} {'Monthly':<12} {'Annual':<13} {'Robot':<8} {'Scanner':<10} {'Idle per':<16}")
-    print(f"{'':42} {'(All 6)':<12} {'(per scan)':<12} {'(per scan)':<15} {'(Total)':<15} {'Add\'l':<12} {'Add\'l':<13} {'Util %':<8} {'Util %':<10} {'Scanner (min/day)':<16}")
-    print("-"*150)
-    
+    # Custom header formatting for Table 1 (throughput/financial/utilization) - sized to avoid wrapping
+    print(f"{'Scenario':<26} {'Daily':<7} {'Scans/Day':<7} {'Addl/Day':<8} {'Addl/Day':<8} {'Monthly':<9} {'Annual':<9} {'Robot':<5} {'Scanner':<5} {'Idle per':<9}")
+    print(f"{'':26} {'(All 6)':<7} {'(per scan)':<7} {'(per scan)':<8} {'(Total)':<8} {'Addl CM':<9} {'Addl CM':<9} {'Util %':<5} {'Util %':<5} {'Scanner min/day':<9}")
+    print('-'*105)
+
     for row in financial_table_data:
-        print(f"{row['Scenario']:<42} {row['Daily Scans (All 6)']:<12} {row['Scans per Day (per scanner)']:<12} {row['Add\'l Scans/Day (per scanner)']:<15} {row['Add\'l Scans/Day (Total)']:<15} {row['Monthly Add\'l CM']:<12} {row['Annual Add\'l CM']:<13} {row['Robot Util %']:<8} {row['Scanner Util %']:<10} {row['Idle per Scanner (min/day)']:<16}")
-    
-    print("\n" + "="*115)
+        print(
+            "{scenario:<26} {daily:<7.1f} {per_scanner:<7.1f} {addl_per:<8} {addl_total:<8} {monthly:<9} {annual:<9} {robot:<5} {scanner:<5} {idle:<9}".format(
+                scenario=row["Scenario"],
+                daily=float(row["Daily Scans (All 6)"]),
+                per_scanner=float(row["Scans per Day (per scanner)"]),
+                addl_per=row["Add'l Scans/Day (per scanner)"],
+                addl_total=row["Add'l Scans/Day (Total)"],
+                monthly=row["Monthly Add'l CM"],
+                annual=row["Annual Add'l CM"],
+                robot=row["Robot Util %"],
+                scanner=row["Scanner Util %"],
+                idle=row["Idle per Scanner (min/day)"],
+            )
+        )
+    print("\n" + "="*110)
     print("TABLE 2: WORKFLOW EFFICIENCY & CAPACITY ANALYSIS")
-    print("="*115)
+    print("="*110)
     print("(Shows capacity improvements calculated directly from Shands workflow timing data)")
     
     # Custom header formatting for Table 2 with proper column widths
     print(f"{'Scenario':<42} {'Time Saved':<12} {'Daily Scans':<13} {'Add\'l Daily':<12} {'Scanner':<10}")
     print(f"{'':42} {'(min/exam)':<12} {'(All 6)':<13} {'Scans':<12} {'Util %':<10}")
-    print("-"*115)
+    print("-"*130)
     
     for row in efficiency_table_data:
         print(f"{row['Scenario']:<42} {row['Time Saved (min/exam)']:<12} {row['Daily Scans (All 6)']:<13} {row['Add\'l Daily Scans']:<12} {row['Scanner Util %']:<10}")
     
-    print("="*115 + "\n")
+    print("="*130 + "\n")
